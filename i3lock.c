@@ -54,6 +54,7 @@ static char password[512];
 static bool beep = false;
 bool debug_mode = false;
 static bool dpms = false;
+static bool dpms_original_state = false;
 bool unlock_indicator = true;
 static bool dont_fork = false;
 struct ev_loop *main_loop;
@@ -70,6 +71,8 @@ cairo_surface_t *img = NULL;
 bool tile = false;
 bool ignore_empty_password = false;
 
+#define DPMS_STATE_IGNORE true
+
 /* isutf, u8_dec © 2005 Jeff Bezanson, public domain */
 #define isutf(c) (((c) & 0xC0) != 0x80)
 
@@ -83,12 +86,46 @@ void u8_dec(char *s, int *i) {
 
 static void turn_monitors_on(void) {
     if (dpms)
-        dpms_set_mode(conn, XCB_DPMS_DPMS_MODE_ON);
+        dpms_set_mode(conn, XCB_DPMS_DPMS_MODE_ON, dpms_original_state);
 }
 
 static void turn_monitors_off(void) {
     if (dpms)
-        dpms_set_mode(conn, XCB_DPMS_DPMS_MODE_OFF);
+        dpms_set_mode(conn, XCB_DPMS_DPMS_MODE_OFF, DPMS_STATE_IGNORE);
+}
+
+/*
+ * Find out if DPMS capability is supported
+ *
+ */
+static bool dpms_capable(void) {
+    bool capable = false;
+
+    xcb_dpms_capable_cookie_t dpmsc = xcb_dpms_capable(conn);
+    xcb_dpms_capable_reply_t *dpmsr;
+    if ((dpmsr = xcb_dpms_capable_reply(conn, dpmsc, NULL))) {
+        capable = dpmsr->capable;
+        free(dpmsr);
+        if (!capable && debug_mode)
+            fprintf(stderr, "Disabling DPMS, X server not DPMS capable\n");
+    }
+    return capable;
+}
+
+/*
+ * Check the state of DPMS before we alter it, so we can restore it later
+ *
+ */
+static bool dpms_state(void) {
+    bool state = false;
+
+    xcb_dpms_info_cookie_t dpmsc = xcb_dpms_info(conn);
+    xcb_dpms_info_reply_t *dpmsr;
+    if ((dpmsr = xcb_dpms_info_reply(conn, dpmsc, NULL))) {
+        state = dpmsr->state;
+        free(dpmsr);
+    }
+    return state;
 }
 
 /*
@@ -760,18 +797,12 @@ int main(int argc, char *argv[]) {
     xinerama_init();
     xinerama_query_screens();
 
-    /* if DPMS is enabled, check if the X server really supports it */
+    /* if DPMS is enabled, check if the X server really supports it and store the original state */
     if (dpms) {
-        xcb_dpms_capable_cookie_t dpmsc = xcb_dpms_capable(conn);
-        xcb_dpms_capable_reply_t *dpmsr;
-        if ((dpmsr = xcb_dpms_capable_reply(conn, dpmsc, NULL))) {
-            if (!dpmsr->capable) {
-                if (debug_mode)
-                    fprintf(stderr, "Disabling DPMS, X server not DPMS capable\n");
-                dpms = false;
-            }
-            free(dpmsr);
-        }
+        if (dpms_capable())
+            dpms_original_state = dpms_state();
+        else
+            dpms = false;
     }
 
     screen = xcb_setup_roots_iterator(xcb_get_setup(conn)).data;

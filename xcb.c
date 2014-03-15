@@ -159,9 +159,13 @@ xcb_window_t open_fullscreen_window(xcb_connection_t *conn, xcb_screen_t *scr, c
  * Set the dpms level to 'mode'.
  *
  */
-void dpms_set_mode(xcb_connection_t *conn, xcb_dpms_dpms_mode_t mode) {
+void dpms_set_mode(xcb_connection_t *conn, xcb_dpms_dpms_mode_t mode, bool dpms_original_state) {
     xcb_dpms_enable(conn);
     xcb_dpms_force_level(conn, mode);
+
+    if (!dpms_original_state)
+        xcb_dpms_disable(conn);
+
     xcb_flush(conn);
 }
 
